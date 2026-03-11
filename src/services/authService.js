@@ -1,12 +1,12 @@
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const { jwtSecret, jwtExpiresIn } = require('../config/env');
 
 function getJwtSecret() {
-    const secret = process.env.JWT_SECRET;
-    if (!secret) {
+    if (!jwtSecret) {
         throw new Error('JWT_SECRET is not configured');
     }
-    return secret;
+    return jwtSecret;
 }
 
 function createAccessToken(user) {
@@ -17,7 +17,7 @@ function createAccessToken(user) {
         },
         getJwtSecret(),
         {
-            expiresIn: process.env.JWT_EXPIRES_IN || '1h'
+            expiresIn: jwtExpiresIn
         }
     );
 }
@@ -39,29 +39,8 @@ async function verifyPassword(plainPassword, storedHash) {
     return bcrypt.compare(plainPassword, storedHash);
 }
 
-function authenticateToken(req, res, next) {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        return res.status(401).json({
-            message: 'Missing or invalid authorization header'
-        });
-    }
-
-    const token = authHeader.slice(7);
-
-    try {
-        const decoded = jwt.verify(token, getJwtSecret());
-        req.auth = decoded;
-        return next();
-    } catch (error) {
-        return res.status(401).json({
-            message: 'Invalid or expired token'
-        });
-    }
-}
-
 module.exports = {
-    authenticateToken,
     createAccessToken,
-    verifyPassword
+    verifyPassword,
+    getJwtSecret
 };
