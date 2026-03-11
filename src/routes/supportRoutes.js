@@ -3,7 +3,9 @@ const { authenticateToken } = require('../middlewares/authMiddleware');
 const {
   listConversations,
   getConversationMessages,
-  sendAgentMessage
+  sendAgentMessage,
+  banConversationUser,
+  clearConversation
 } = require('../controllers/supportController');
 
 const router = express.Router();
@@ -13,5 +15,7 @@ router.use(authenticateToken);
 router.get('/conversations', listConversations);
 router.get('/conversations/:conversationId/messages', getConversationMessages);
 router.post('/conversations/:conversationId/messages', sendAgentMessage);
+router.post('/conversations/:conversationId/ban', banConversationUser);
+router.post('/conversations/:conversationId/clear', clearConversation);
 
 module.exports = router;
