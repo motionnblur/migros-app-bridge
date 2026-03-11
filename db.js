@@ -1,0 +1,19 @@
+const { Pool } = require('pg');
+
+const pool = new Pool({
+    host: process.env.DB_HOST || 'localhost',
+    port: Number(process.env.DB_PORT) || 5432,
+    database: process.env.DB_NAME || 'migros_support_db',
+    user: process.env.DB_USER || 'postgres',
+    password: process.env.DB_PASSWORD || '1'
+});
+
+async function checkDbConnection() {
+    const result = await pool.query('SELECT 1 AS ok');
+    return result.rows[0];
+}
+
+module.exports = {
+    pool,
+    checkDbConnection
+};
