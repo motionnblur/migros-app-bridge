@@ -5,6 +5,7 @@ const {
   getConversationMessages,
   sendAgentMessage,
   banConversationUser,
+  unbanConversationUser,
   clearConversation
 } = require('../controllers/supportController');
 
@@ -16,6 +17,7 @@ router.get('/conversations', listConversations);
 router.get('/conversations/:conversationId/messages', getConversationMessages);
 router.post('/conversations/:conversationId/messages', sendAgentMessage);
 router.post('/conversations/:conversationId/ban', banConversationUser);
+router.post('/conversations/:conversationId/unban', unbanConversationUser);
 router.post('/conversations/:conversationId/clear', clearConversation);
 
 module.exports = router;

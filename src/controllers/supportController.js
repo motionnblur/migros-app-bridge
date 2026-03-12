@@ -219,6 +219,52 @@ async function banConversationUser(req, res) {
     }
 }
 
+async function unbanConversationUser(req, res) {
+    const client = await pool.connect();
+
+    try {
+      const { conversationId } = req.params;
+      await client.query('BEGIN');
+
+      const conversationResult = await client.query(
+        `SELECT conversation_id, customer_id, is_banned
+         FROM support_conversations WHERE conversation_id = $1 LIMIT 1 FOR UPDATE`,
+        [conversationId]
+      );
+
+      if (conversationResult.rowCount === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ message: 'Conversation not found' });
+      }
+
+      const conversation = conversationResult.rows[0];
+      if (!conversation.is_banned) {
+        await client.query('ROLLBACK');
+        return res.status(200).json({ ok: true, alreadyUnbanned: true, isBanned: false });
+      }
+
+      await forwardToSpring('/internal/support/unban-user', {
+        userMail: conversation.customer_id
+      });
+
+      await client.query(
+        `UPDATE support_conversations SET is_banned = FALSE, updated_at = NOW() WHERE conversation_id = $1`,
+        [conversationId]
+      );
+
+      await client.query('COMMIT');
+      return res.status(200).json({ ok: true, conversationId, isBanned: false });
+    } catch (error) {
+      await client.query('ROLLBACK');
+      const isForwardingError = typeof error?.message === 'string' && error.message.startsWith('Spring forwarding failed');
+      return res.status(isForwardingError ? 502 : 500).json({
+        message: isForwardingError ? `Failed to unban user: ${error.message}` : error.message
+      });
+    } finally {
+      client.release();
+    }
+}
+
 async function clearConversation(req, res) {
     const client = await pool.connect();
 
@@ -264,6 +310,7 @@ module.exports = {
     getConversationMessages,
     sendAgentMessage,
     banConversationUser,
+    unbanConversationUser,
     clearConversation
 };
 
