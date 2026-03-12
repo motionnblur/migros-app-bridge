@@ -269,6 +269,102 @@ async function editAgentMessage(req, res) {
         client.release();
     }
 }
+async function deleteAgentMessage(req, res) {
+    const client = await pool.connect();
+
+    try {
+        const { conversationId, messageId } = req.params;
+
+        if (!conversationId || !messageId) {
+            return res.status(400).json({ message: 'conversationId and messageId are required' });
+        }
+
+        await client.query('BEGIN');
+
+        const messageResult = await client.query(
+            `SELECT id, message_id, conversation_id, customer_id, sender, text, occurred_at, can_edit, edited_at
+             FROM support_messages
+             WHERE conversation_id = $1 AND message_id = $2
+             LIMIT 1
+             FOR UPDATE`,
+            [conversationId, messageId]
+        );
+
+        if (messageResult.rowCount === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ message: 'Message not found' });
+        }
+
+        const message = messageResult.rows[0];
+
+        if (message.sender !== 'AGENT') {
+            await client.query('ROLLBACK');
+            return res.status(403).json({ message: 'Only support messages can be deleted' });
+        }
+
+        if (!message.can_edit) {
+            await client.query('ROLLBACK');
+            return res.status(409).json({ message: 'This message cannot be deleted' });
+        }
+
+        await client.query(
+            `DELETE FROM support_messages
+             WHERE id = $1`,
+            [message.id]
+        );
+
+        await forwardToSpring('/internal/support/delete-agent-message', {
+            userMail: message.customer_id,
+            externalMessageId: message.message_id
+        });
+
+        const latestMessageResult = await client.query(
+            `SELECT id, text, occurred_at
+             FROM support_messages
+             WHERE conversation_id = $1
+             ORDER BY id DESC
+             LIMIT 1`,
+            [conversationId]
+        );
+
+        let conversationRemoved = false;
+        if (latestMessageResult.rowCount === 0) {
+            await client.query(
+                `DELETE FROM support_conversations
+                 WHERE conversation_id = $1`,
+                [conversationId]
+            );
+            conversationRemoved = true;
+        } else {
+            const latestMessage = latestMessageResult.rows[0];
+            await client.query(
+                `UPDATE support_conversations
+                 SET last_message_preview = $2,
+                     last_message_at = $3,
+                     updated_at = NOW()
+                 WHERE conversation_id = $1`,
+                [conversationId, String(latestMessage.text || '').slice(0, 250), latestMessage.occurred_at]
+            );
+        }
+
+        await client.query('COMMIT');
+        return res.status(200).json({
+            ok: true,
+            conversationId,
+            messageId,
+            removed: true,
+            conversationRemoved
+        });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        const isForwardingError = typeof error?.message === 'string' && error.message.startsWith('Spring forwarding failed');
+        return res.status(isForwardingError ? 502 : 500).json({
+            message: isForwardingError ? `Failed to delete message: ${error.message}` : error.message
+        });
+    } finally {
+        client.release();
+    }
+}
 async function banConversationUser(req, res) {
     const client = await pool.connect();
 
@@ -406,6 +502,7 @@ module.exports = {
     getConversationMessages,
     sendAgentMessage,
     editAgentMessage,
+    deleteAgentMessage,
     banConversationUser,
     unbanConversationUser,
     clearConversation
