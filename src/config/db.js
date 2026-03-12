@@ -22,6 +22,7 @@ async function initializeSupportSchema() {
             last_message_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             unread_count INTEGER NOT NULL DEFAULT 0,
             is_banned BOOLEAN NOT NULL DEFAULT FALSE,
+            is_cleared BOOLEAN NOT NULL DEFAULT FALSE,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
@@ -30,6 +31,11 @@ async function initializeSupportSchema() {
     await pool.query(`
         ALTER TABLE support_conversations
         ADD COLUMN IF NOT EXISTS is_banned BOOLEAN NOT NULL DEFAULT FALSE;
+    `);
+
+    await pool.query(`
+        ALTER TABLE support_conversations
+        ADD COLUMN IF NOT EXISTS is_cleared BOOLEAN NOT NULL DEFAULT FALSE;
     `);
 
     await pool.query(`

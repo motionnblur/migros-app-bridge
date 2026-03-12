@@ -68,32 +68,86 @@ async function recomputeConversationState(client, conversationId) {
   return { conversationRemoved: false };
 }
 
+function normalizeCustomerMessageEvent(body) {
+  const payload = body || {};
+  const fallbackUserMail = typeof payload.userMail === 'string' ? payload.userMail.trim() : '';
+
+  const normalizedConversationId =
+    typeof payload.conversationId === 'string' && payload.conversationId.trim()
+      ? payload.conversationId.trim()
+      : fallbackUserMail;
+
+  const normalizedCustomerId =
+    typeof payload.customerId === 'string' && payload.customerId.trim()
+      ? payload.customerId.trim()
+      : fallbackUserMail;
+
+  const normalizedMessageId =
+    typeof payload.messageId === 'string' && payload.messageId.trim()
+      ? payload.messageId.trim()
+      : String(payload.messageId || '').trim();
+
+  const normalizedText = typeof payload.text === 'string' ? payload.text : '';
+
+  return {
+    eventId: payload.eventId || null,
+    occurredAt: payload.occurredAt || null,
+    conversationId: normalizedConversationId,
+    customerId: normalizedCustomerId,
+    messageId: normalizedMessageId,
+    text: normalizedText,
+    usedUserMailFallback:
+      Boolean(fallbackUserMail) && (!payload.conversationId || !payload.customerId)
+  };
+}
+
 router.post('/customer-message-created', async (req, res) => {
   const client = await pool.connect();
 
   try {
-    const { eventId, conversationId, customerId, messageId, text, occurredAt } = req.body || {};
+    const normalized = normalizeCustomerMessageEvent(req.body);
 
-    if (!conversationId || !customerId || !messageId || !text) {
+    if (normalized.usedUserMailFallback) {
+      console.warn('[internal-event] customer-message-created used userMail fallback', {
+        eventId: normalized.eventId,
+        conversationId: normalized.conversationId,
+        customerId: normalized.customerId
+      });
+    }
+
+    if (!normalized.conversationId || !normalized.customerId || !normalized.messageId || !normalized.text) {
+      console.warn('[internal-event] customer-message-created missing required fields', {
+        eventId: normalized.eventId,
+        conversationId: normalized.conversationId || null,
+        customerId: normalized.customerId || null,
+        messageId: normalized.messageId || null,
+        hasText: Boolean(normalized.text)
+      });
+
       return res.status(400).json({
         message: 'Missing required fields',
         required: ['conversationId', 'customerId', 'messageId', 'text']
       });
     }
 
+    const occurredAt = normalized.occurredAt || new Date().toISOString();
+
     await client.query('BEGIN');
 
-    const shouldProcess = await ingestEventId(client, eventId);
+    const shouldProcess = await ingestEventId(client, normalized.eventId);
     if (!shouldProcess) {
       await client.query('COMMIT');
       return res.status(202).json({ ok: true, duplicate: true });
     }
 
     await client.query(
-      `INSERT INTO support_conversations (conversation_id, customer_id, last_message_preview, last_message_at, unread_count)
-       VALUES ($1, $2, '', $3, 0)
-       ON CONFLICT (conversation_id) DO NOTHING`,
-      [conversationId, customerId, occurredAt || new Date().toISOString()]
+      `INSERT INTO support_conversations (conversation_id, customer_id, last_message_preview, last_message_at, unread_count, is_cleared)
+       VALUES ($1, $2, '', $3, 0, FALSE)
+       ON CONFLICT (conversation_id) DO UPDATE
+       SET customer_id = EXCLUDED.customer_id,
+           is_cleared = FALSE,
+           updated_at = NOW()`,
+      [normalized.conversationId, normalized.customerId, occurredAt]
     );
 
     const messageInsert = await client.query(
@@ -102,11 +156,11 @@ router.post('/customer-message-created', async (req, res) => {
        ON CONFLICT (message_id) DO NOTHING
        RETURNING id`,
       [
-        messageId,
-        conversationId,
-        customerId,
-        text,
-        occurredAt || new Date().toISOString()
+        normalized.messageId,
+        normalized.conversationId,
+        normalized.customerId,
+        normalized.text,
+        occurredAt
       ]
     );
 
@@ -117,13 +171,14 @@ router.post('/customer-message-created', async (req, res) => {
              last_message_preview = $3,
              last_message_at = $4,
              unread_count = unread_count + 1,
+             is_cleared = FALSE,
              updated_at = NOW()
          WHERE conversation_id = $1`,
         [
-          conversationId,
-          customerId,
-          text.slice(0, 250),
-          occurredAt || new Date().toISOString()
+          normalized.conversationId,
+          normalized.customerId,
+          normalized.text.slice(0, 250),
+          occurredAt
         ]
       );
     }
@@ -134,11 +189,11 @@ router.post('/customer-message-created', async (req, res) => {
       ok: true,
       duplicate: messageInsert.rowCount === 0,
       received: {
-        eventId: eventId || null,
-        conversationId,
-        customerId,
-        messageId,
-        occurredAt: occurredAt || null
+        eventId: normalized.eventId || null,
+        conversationId: normalized.conversationId,
+        customerId: normalized.customerId,
+        messageId: normalized.messageId,
+        occurredAt: normalized.occurredAt || null
       }
     });
   } catch (error) {

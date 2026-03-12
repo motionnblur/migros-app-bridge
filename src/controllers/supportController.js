@@ -131,6 +131,7 @@ async function listConversations(req, res) {
         const result = await pool.query(
             `SELECT conversation_id, customer_id, last_message_preview, last_message_at, unread_count, is_banned
              FROM support_conversations
+             WHERE COALESCE(is_cleared, FALSE) = FALSE
              ORDER BY last_message_at DESC
              LIMIT $1`,
             [limit]
@@ -229,8 +230,8 @@ async function sendAgentMessage(req, res) {
             }
 
             await client.query(
-                `INSERT INTO support_conversations (conversation_id, customer_id, last_message_preview, last_message_at, unread_count, is_banned)
-                 VALUES ($1, $1, '', NOW(), 0, FALSE)
+                `INSERT INTO support_conversations (conversation_id, customer_id, last_message_preview, last_message_at, unread_count, is_banned, is_cleared)
+                 VALUES ($1, $1, '', NOW(), 0, FALSE, FALSE)
                  ON CONFLICT (conversation_id) DO NOTHING`,
                 [userMail]
             );
@@ -273,6 +274,7 @@ async function sendAgentMessage(req, res) {
              SET last_message_preview = $2,
                  last_message_at = NOW(),
                  unread_count = 0,
+                 is_cleared = FALSE,
                  updated_at = NOW()
              WHERE conversation_id = $1`,
             [conversation.conversation_id, text.slice(0, 250)]
@@ -604,7 +606,12 @@ async function clearConversation(req, res) {
       });
 
       await client.query(`DELETE FROM support_messages WHERE conversation_id = $1`, [conversationId]);
-      await client.query(`DELETE FROM support_conversations WHERE conversation_id = $1`, [conversationId]);
+      await client.query(`UPDATE support_conversations
+         SET is_cleared = TRUE,
+             unread_count = 0,
+             last_message_preview = '',
+             updated_at = NOW()
+         WHERE conversation_id = $1`, [conversationId]);
 
       await client.query('COMMIT');
       return res.status(200).json({ ok: true, conversationId, removed: true });
