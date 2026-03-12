@@ -1,6 +1,7 @@
 const express = require('express');
 const { authenticateToken } = require('../middlewares/authMiddleware');
 const {
+  listCustomers,
   listConversations,
   getConversationMessages,
   sendAgentMessage,
@@ -15,6 +16,7 @@ const router = express.Router();
 
 router.use(authenticateToken);
 
+router.get('/customers', listCustomers);
 router.get('/conversations', listConversations);
 router.get('/conversations/:conversationId/messages', getConversationMessages);
 router.post('/conversations/:conversationId/messages', sendAgentMessage);

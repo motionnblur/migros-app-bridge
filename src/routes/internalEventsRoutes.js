@@ -21,6 +21,53 @@ function authenticateInternalEvent(req, res, next) {
 
 router.use(authenticateInternalEvent);
 
+async function ingestEventId(client, eventId) {
+  if (!eventId) {
+    return true;
+  }
+
+  const eventInsert = await client.query(
+    `INSERT INTO support_ingested_events (event_id) VALUES ($1)
+     ON CONFLICT (event_id) DO NOTHING
+     RETURNING event_id`,
+    [eventId]
+  );
+
+  return eventInsert.rowCount > 0;
+}
+
+async function recomputeConversationState(client, conversationId) {
+  const latestMessageResult = await client.query(
+    `SELECT text, occurred_at
+     FROM support_messages
+     WHERE conversation_id = $1
+     ORDER BY id DESC
+     LIMIT 1`,
+    [conversationId]
+  );
+
+  if (latestMessageResult.rowCount === 0) {
+    await client.query(
+      `DELETE FROM support_conversations
+       WHERE conversation_id = $1`,
+      [conversationId]
+    );
+    return { conversationRemoved: true };
+  }
+
+  const latestMessage = latestMessageResult.rows[0];
+  await client.query(
+    `UPDATE support_conversations
+     SET last_message_preview = $2,
+         last_message_at = $3,
+         updated_at = NOW()
+     WHERE conversation_id = $1`,
+    [conversationId, String(latestMessage.text || '').slice(0, 250), latestMessage.occurred_at]
+  );
+
+  return { conversationRemoved: false };
+}
+
 router.post('/customer-message-created', async (req, res) => {
   const client = await pool.connect();
 
@@ -36,18 +83,10 @@ router.post('/customer-message-created', async (req, res) => {
 
     await client.query('BEGIN');
 
-    if (eventId) {
-      const eventInsert = await client.query(
-        `INSERT INTO support_ingested_events (event_id) VALUES ($1)
-         ON CONFLICT (event_id) DO NOTHING
-         RETURNING event_id`,
-        [eventId]
-      );
-
-      if (eventInsert.rowCount === 0) {
-        await client.query('COMMIT');
-        return res.status(202).json({ ok: true, duplicate: true });
-      }
+    const shouldProcess = await ingestEventId(client, eventId);
+    if (!shouldProcess) {
+      await client.query('COMMIT');
+      return res.status(202).json({ ok: true, duplicate: true });
     }
 
     await client.query(
@@ -101,6 +140,110 @@ router.post('/customer-message-created', async (req, res) => {
         messageId,
         occurredAt: occurredAt || null
       }
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    return res.status(500).json({ message: error.message || 'Internal server error' });
+  } finally {
+    client.release();
+  }
+});
+
+router.post('/support-message-edited', async (req, res) => {
+  const client = await pool.connect();
+
+  try {
+    const { eventId, userMail, messageId, text } = req.body || {};
+
+    if (!userMail || !messageId || !text) {
+      return res.status(400).json({
+        message: 'Missing required fields',
+        required: ['userMail', 'messageId', 'text']
+      });
+    }
+
+    await client.query('BEGIN');
+
+    const shouldProcess = await ingestEventId(client, eventId);
+    if (!shouldProcess) {
+      await client.query('COMMIT');
+      return res.status(202).json({ ok: true, duplicate: true });
+    }
+
+    const updateResult = await client.query(
+      `UPDATE support_messages
+       SET text = $3,
+           edited_at = NOW()
+       WHERE conversation_id = $1
+         AND message_id = $2
+       RETURNING id`,
+      [userMail, messageId, text]
+    );
+
+    if (updateResult.rowCount === 0) {
+      await client.query('COMMIT');
+      return res.status(202).json({ ok: true, missing: true });
+    }
+
+    const conversationState = await recomputeConversationState(client, userMail);
+
+    await client.query('COMMIT');
+
+    return res.status(202).json({
+      ok: true,
+      updated: true,
+      conversationRemoved: conversationState.conversationRemoved
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    return res.status(500).json({ message: error.message || 'Internal server error' });
+  } finally {
+    client.release();
+  }
+});
+
+router.post('/support-message-deleted', async (req, res) => {
+  const client = await pool.connect();
+
+  try {
+    const { eventId, userMail, messageId } = req.body || {};
+
+    if (!userMail || !messageId) {
+      return res.status(400).json({
+        message: 'Missing required fields',
+        required: ['userMail', 'messageId']
+      });
+    }
+
+    await client.query('BEGIN');
+
+    const shouldProcess = await ingestEventId(client, eventId);
+    if (!shouldProcess) {
+      await client.query('COMMIT');
+      return res.status(202).json({ ok: true, duplicate: true });
+    }
+
+    const deleteResult = await client.query(
+      `DELETE FROM support_messages
+       WHERE conversation_id = $1
+         AND message_id = $2
+       RETURNING id`,
+      [userMail, messageId]
+    );
+
+    if (deleteResult.rowCount === 0) {
+      await client.query('COMMIT');
+      return res.status(202).json({ ok: true, missing: true });
+    }
+
+    const conversationState = await recomputeConversationState(client, userMail);
+
+    await client.query('COMMIT');
+
+    return res.status(202).json({
+      ok: true,
+      deleted: true,
+      conversationRemoved: conversationState.conversationRemoved
     });
   } catch (error) {
     await client.query('ROLLBACK');

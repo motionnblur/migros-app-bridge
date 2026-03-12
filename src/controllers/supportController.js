@@ -3,25 +3,76 @@ const { pool } = require('../config/db');
 const SPRING_SUPPORT_BASE_URL = process.env.SPRING_SUPPORT_BASE_URL || 'http://localhost:8080';
 const SPRING_SUPPORT_INTERNAL_KEY = process.env.SPRING_SUPPORT_INTERNAL_KEY || '';
 
-async function forwardToSpring(path, body) {
-    const headers = {
-        'Content-Type': 'application/json'
-    };
+async function requestSpring(path, options = {}) {
+    const method = options.method || 'POST';
+    const body = options.body;
+
+    const headers = {};
+    if (body !== undefined) {
+        headers['Content-Type'] = 'application/json';
+    }
 
     if (SPRING_SUPPORT_INTERNAL_KEY) {
         headers['x-internal-key'] = SPRING_SUPPORT_INTERNAL_KEY;
     }
 
     const response = await fetch(`${SPRING_SUPPORT_BASE_URL}${path}`, {
-        method: 'POST',
+        method,
         headers,
-        body: JSON.stringify(body)
+        body: body !== undefined ? JSON.stringify(body) : undefined
+    });
+
+    const text = await response.text().catch(() => '');
+    let data = null;
+
+    if (text) {
+        try {
+            data = JSON.parse(text);
+        } catch (parseError) {
+            data = null;
+        }
+    }
+
+    return {
+        ok: response.ok,
+        status: response.status,
+        text,
+        data
+    };
+}
+
+async function forwardToSpring(path, body) {
+    const response = await requestSpring(path, {
+        method: 'POST',
+        body
     });
 
     if (!response.ok) {
-        const detail = await response.text().catch(() => '');
+        const detail = response.text || '';
         throw new Error(`Spring forwarding failed with status ${response.status}${detail ? `: ${detail}` : ''}`);
     }
+}
+
+async function forwardGetFromSpring(path, query = {}) {
+    const queryParams = new URLSearchParams();
+
+    Object.entries(query).forEach(([key, value]) => {
+        if (value === undefined || value === null) {
+            return;
+        }
+
+        const stringValue = String(value).trim();
+        if (!stringValue) {
+            return;
+        }
+
+        queryParams.set(key, stringValue);
+    });
+
+    const queryString = queryParams.toString();
+    const finalPath = queryString ? `${path}?${queryString}` : path;
+
+    return requestSpring(finalPath, { method: 'GET' });
 }
 
 function mapConversation(row) {
@@ -47,6 +98,30 @@ function mapMessage(row) {
         canEdit: Boolean(row.can_edit),
         editedAt: row.edited_at || null
     };
+}
+
+async function listCustomers(req, res) {
+    try {
+        const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 100);
+        const query = typeof req.query.query === 'string' ? req.query.query.trim() : '';
+
+        const springResponse = await forwardGetFromSpring('/internal/support/customers', {
+            query,
+            limit
+        });
+
+        if (!springResponse.ok) {
+            const detail = springResponse.text || '';
+            return res.status(502).json({
+                message: `Failed to load customers from core backend (status ${springResponse.status})${detail ? `: ${detail}` : ''}`
+            });
+        }
+
+        const data = Array.isArray(springResponse.data) ? springResponse.data : [];
+        return res.status(200).json(data);
+    } catch (error) {
+        return res.status(500).json({ message: error.message });
+    }
 }
 
 async function listConversations(req, res) {
@@ -123,12 +198,56 @@ async function sendAgentMessage(req, res) {
             [conversationId]
         );
 
-        if (conversationResult.rowCount === 0) {
-            await client.query('ROLLBACK');
-            return res.status(404).json({ message: 'Conversation not found' });
+        let conversation = conversationResult.rows[0] || null;
+
+        if (!conversation) {
+            const userMail = String(conversationId || '').trim();
+            if (!userMail) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({ message: 'conversationId is required' });
+            }
+
+            const customerStatusResponse = await forwardGetFromSpring('/internal/support/customer-status', {
+                userMail
+            });
+
+            if (customerStatusResponse.status === 404) {
+                await client.query('ROLLBACK');
+                return res.status(404).json({ message: 'Customer not found' });
+            }
+
+            if (!customerStatusResponse.ok) {
+                const detail = customerStatusResponse.text || '';
+                throw new Error(
+                    `Spring forwarding failed with status ${customerStatusResponse.status}${detail ? `: ${detail}` : ''}`
+                );
+            }
+
+            if (Boolean(customerStatusResponse.data?.isBanned)) {
+                await client.query('ROLLBACK');
+                return res.status(403).json({ message: 'User is banned. Sending messages is disabled.' });
+            }
+
+            await client.query(
+                `INSERT INTO support_conversations (conversation_id, customer_id, last_message_preview, last_message_at, unread_count, is_banned)
+                 VALUES ($1, $1, '', NOW(), 0, FALSE)
+                 ON CONFLICT (conversation_id) DO NOTHING`,
+                [userMail]
+            );
+
+            const createdConversationResult = await client.query(
+                `SELECT conversation_id, customer_id, is_banned
+                 FROM support_conversations WHERE conversation_id = $1 LIMIT 1 FOR UPDATE`,
+                [userMail]
+            );
+
+            if (createdConversationResult.rowCount === 0) {
+                throw new Error('Failed to initialize support conversation');
+            }
+
+            conversation = createdConversationResult.rows[0];
         }
 
-        const conversation = conversationResult.rows[0];
         if (conversation.is_banned) {
             await client.query('ROLLBACK');
             return res.status(403).json({ message: 'User is banned. Sending messages is disabled.' });
@@ -177,6 +296,7 @@ async function sendAgentMessage(req, res) {
         client.release();
     }
 }
+
 async function editAgentMessage(req, res) {
     const client = await pool.connect();
 
@@ -269,6 +389,7 @@ async function editAgentMessage(req, res) {
         client.release();
     }
 }
+
 async function deleteAgentMessage(req, res) {
     const client = await pool.connect();
 
@@ -365,6 +486,7 @@ async function deleteAgentMessage(req, res) {
         client.release();
     }
 }
+
 async function banConversationUser(req, res) {
     const client = await pool.connect();
 
@@ -498,6 +620,7 @@ async function clearConversation(req, res) {
 }
 
 module.exports = {
+    listCustomers,
     listConversations,
     getConversationMessages,
     sendAgentMessage,
