@@ -4,6 +4,7 @@ const {
   listConversations,
   getConversationMessages,
   sendAgentMessage,
+  editAgentMessage,
   banConversationUser,
   unbanConversationUser,
   clearConversation
@@ -16,6 +17,7 @@ router.use(authenticateToken);
 router.get('/conversations', listConversations);
 router.get('/conversations/:conversationId/messages', getConversationMessages);
 router.post('/conversations/:conversationId/messages', sendAgentMessage);
+router.patch('/conversations/:conversationId/messages/:messageId', editAgentMessage);
 router.post('/conversations/:conversationId/ban', banConversationUser);
 router.post('/conversations/:conversationId/unban', unbanConversationUser);
 router.post('/conversations/:conversationId/clear', clearConversation);

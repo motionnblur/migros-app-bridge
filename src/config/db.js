@@ -41,8 +41,20 @@ async function initializeSupportSchema() {
             sender TEXT NOT NULL,
             text TEXT NOT NULL,
             occurred_at TIMESTAMPTZ NOT NULL,
+            can_edit BOOLEAN NOT NULL DEFAULT FALSE,
+            edited_at TIMESTAMPTZ NULL,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
+    `);
+
+    await pool.query(`
+        ALTER TABLE support_messages
+        ADD COLUMN IF NOT EXISTS can_edit BOOLEAN NOT NULL DEFAULT FALSE;
+    `);
+
+    await pool.query(`
+        ALTER TABLE support_messages
+        ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ NULL;
     `);
 
     await pool.query(`

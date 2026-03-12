@@ -43,7 +43,9 @@ function mapMessage(row) {
         customerId: row.customer_id,
         sender: row.sender,
         text: row.text,
-        occurredAt: row.occurred_at
+        occurredAt: row.occurred_at,
+        canEdit: Boolean(row.can_edit),
+        editedAt: row.edited_at || null
     };
 }
 
@@ -80,7 +82,7 @@ async function getConversationMessages(req, res) {
         }
 
         const messageResult = await pool.query(
-            `SELECT id, message_id, conversation_id, customer_id, sender, text, occurred_at
+            `SELECT id, message_id, conversation_id, customer_id, sender, text, occurred_at, can_edit, edited_at
              FROM support_messages
              WHERE conversation_id = $1
              ORDER BY id DESC
@@ -132,12 +134,14 @@ async function sendAgentMessage(req, res) {
             return res.status(403).json({ message: 'User is banned. Sending messages is disabled.' });
         }
 
+        const externalMessageId = `agent-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+
         const insertMessageResult = await client.query(
-            `INSERT INTO support_messages (message_id, conversation_id, customer_id, sender, text, occurred_at)
-             VALUES ($1, $2, $3, $4, $5, NOW())
-             RETURNING id, message_id, conversation_id, customer_id, sender, text, occurred_at`,
+            `INSERT INTO support_messages (message_id, conversation_id, customer_id, sender, text, occurred_at, can_edit)
+             VALUES ($1, $2, $3, $4, $5, NOW(), TRUE)
+             RETURNING id, message_id, conversation_id, customer_id, sender, text, occurred_at, can_edit, edited_at`,
             [
-                `agent-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
+                externalMessageId,
                 conversation.conversation_id,
                 conversation.customer_id,
                 'AGENT',
@@ -157,7 +161,8 @@ async function sendAgentMessage(req, res) {
 
         await forwardToSpring('/internal/support/agent-message', {
             userMail: conversation.customer_id,
-            message: text
+            message: text,
+            externalMessageId
         });
 
         await client.query('COMMIT');
@@ -172,7 +177,98 @@ async function sendAgentMessage(req, res) {
         client.release();
     }
 }
+async function editAgentMessage(req, res) {
+    const client = await pool.connect();
 
+    try {
+        const { conversationId, messageId } = req.params;
+        const text = typeof req.body?.text === 'string' ? req.body.text.trim() : '';
+
+        if (!conversationId || !messageId) {
+            return res.status(400).json({ message: 'conversationId and messageId are required' });
+        }
+
+        if (!text) {
+            return res.status(400).json({ message: 'text is required' });
+        }
+
+        await client.query('BEGIN');
+
+        const messageResult = await client.query(
+            `SELECT id, message_id, conversation_id, customer_id, sender, text, occurred_at, can_edit, edited_at
+             FROM support_messages
+             WHERE conversation_id = $1 AND message_id = $2
+             LIMIT 1
+             FOR UPDATE`,
+            [conversationId, messageId]
+        );
+
+        if (messageResult.rowCount === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ message: 'Message not found' });
+        }
+
+        const message = messageResult.rows[0];
+
+        if (message.sender !== 'AGENT') {
+            await client.query('ROLLBACK');
+            return res.status(403).json({ message: 'Only support messages can be edited' });
+        }
+
+        if (!message.can_edit) {
+            await client.query('ROLLBACK');
+            return res.status(409).json({ message: 'This message cannot be edited' });
+        }
+
+        const updateResult = await client.query(
+            `UPDATE support_messages
+             SET text = $2,
+                 edited_at = NOW()
+             WHERE id = $1
+             RETURNING id, message_id, conversation_id, customer_id, sender, text, occurred_at, can_edit, edited_at`,
+            [message.id, text]
+        );
+
+        await forwardToSpring('/internal/support/edit-agent-message', {
+            userMail: message.customer_id,
+            externalMessageId: message.message_id,
+            message: text
+        });
+
+        const latestMessageResult = await client.query(
+            `SELECT id
+             FROM support_messages
+             WHERE conversation_id = $1
+             ORDER BY id DESC
+             LIMIT 1`,
+            [conversationId]
+        );
+
+        if (
+            latestMessageResult.rowCount > 0 &&
+            Number(latestMessageResult.rows[0].id) === Number(message.id)
+        ) {
+            await client.query(
+                `UPDATE support_conversations
+                 SET last_message_preview = $2,
+                     updated_at = NOW()
+                 WHERE conversation_id = $1`,
+                [conversationId, text.slice(0, 250)]
+            );
+        }
+
+        await client.query('COMMIT');
+        return res.status(200).json(mapMessage(updateResult.rows[0]));
+    } catch (error) {
+        await client.query('ROLLBACK');
+        const isForwardingError = typeof error?.message === 'string' && error.message.startsWith('Spring forwarding failed');
+        return res.status(isForwardingError ? 502 : 500).json({
+            message: isForwardingError ? `Failed to edit message: ${error.message}` : error.message
+        });
+    } finally {
+        client.release();
+    }
+}
 async function banConversationUser(req, res) {
     const client = await pool.connect();
 
@@ -309,8 +405,8 @@ module.exports = {
     listConversations,
     getConversationMessages,
     sendAgentMessage,
+    editAgentMessage,
     banConversationUser,
     unbanConversationUser,
     clearConversation
 };
-
