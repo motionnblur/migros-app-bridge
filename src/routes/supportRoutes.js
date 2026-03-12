@@ -3,6 +3,7 @@ const { authenticateToken } = require('../middlewares/authMiddleware');
 const {
   listCustomers,
   listConversations,
+  listConversationStatuses,
   getConversationMessages,
   sendAgentMessage,
   editAgentMessage,
@@ -18,6 +19,7 @@ router.use(authenticateToken);
 
 router.get('/customers', listCustomers);
 router.get('/conversations', listConversations);
+router.get('/conversations/status', listConversationStatuses);
 router.get('/conversations/:conversationId/messages', getConversationMessages);
 router.post('/conversations/:conversationId/messages', sendAgentMessage);
 router.patch('/conversations/:conversationId/messages/:messageId', editAgentMessage);

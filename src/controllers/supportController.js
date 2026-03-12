@@ -143,6 +143,82 @@ async function listConversations(req, res) {
     }
 }
 
+async function listConversationStatuses(req, res) {
+    try {
+        const rawConversationIds = typeof req.query.conversationIds === 'string' ? req.query.conversationIds : '';
+        const conversationIds = Array.from(
+            new Set(
+                rawConversationIds
+                    .split(',')
+                    .map((value) => value.trim())
+                    .filter(Boolean)
+            )
+        );
+
+        if (!conversationIds.length) {
+            return res.status(400).json({ message: 'conversationIds query parameter is required' });
+        }
+
+        if (conversationIds.length > 200) {
+            return res.status(400).json({ message: 'A maximum of 200 conversationIds is allowed' });
+        }
+
+        const results = await Promise.all(
+            conversationIds.map(async (conversationId) => {
+                const springResponse = await forwardGetFromSpring('/internal/support/customer-status', {
+                    userMail: conversationId
+                });
+
+                if (!springResponse.ok) {
+                    return {
+                        ok: false,
+                        conversationId,
+                        status: springResponse.status,
+                        detail: springResponse.text || ''
+                    };
+                }
+
+                return {
+                    ok: true,
+                    status: {
+                        conversationId,
+                        isOnline: Boolean(springResponse.data?.isOnline),
+                        isBanned: Boolean(springResponse.data?.isBanned),
+                        hasConversation: Boolean(springResponse.data?.hasConversation)
+                    }
+                };
+            })
+        );
+
+        const statuses = [];
+        const errors = [];
+
+        results.forEach((result) => {
+            if (result.ok) {
+                statuses.push(result.status);
+                return;
+            }
+
+            errors.push({
+                conversationId: result.conversationId,
+                status: result.status,
+                error: result.detail || 'Failed to fetch customer status'
+            });
+        });
+
+        if (!statuses.length) {
+            return res.status(502).json({
+                message: 'Failed to fetch conversation statuses from core backend',
+                errors
+            });
+        }
+
+        return res.status(200).json({ statuses, errors });
+    } catch (error) {
+        return res.status(500).json({ message: error.message });
+    }
+}
+
 async function getConversationMessages(req, res) {
     try {
         const { conversationId } = req.params;
@@ -629,6 +705,7 @@ async function clearConversation(req, res) {
 module.exports = {
     listCustomers,
     listConversations,
+    listConversationStatuses,
     getConversationMessages,
     sendAgentMessage,
     editAgentMessage,
