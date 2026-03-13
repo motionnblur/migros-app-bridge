@@ -63,6 +63,7 @@ It handles support authentication, conversation/message state in PostgreSQL, and
 
 - Node.js 18+ (uses global `fetch`)
 - PostgreSQL
+- Docker Desktop (optional, for containerized run)
 
 ## Environment variables
 
@@ -72,8 +73,9 @@ It handles support authentication, conversation/message state in PostgreSQL, and
 | `DB_HOST` | No | `localhost` | PostgreSQL host |
 | `DB_PORT` | No | `5432` | PostgreSQL port |
 | `DB_NAME` | No | `migros_support_db` | PostgreSQL database name |
-| `DB_USER` | Yes* | - | PostgreSQL user |
-| `DB_PASSWORD` | Yes* | - | PostgreSQL password |
+| `DB_USER` | Conditionally* | - | PostgreSQL user (required only if `DATABASE_URL` is not set) |
+| `DB_PASSWORD` | Conditionally* | - | PostgreSQL password (required only if `DATABASE_URL` is not set) |
+| `DB_SSL_REJECT_UNAUTHORIZED` | No | `false` for Supabase hosts, otherwise `true` | TLS cert chain validation behavior |
 | `JWT_SECRET` | Yes | - | Secret for signing/verifying JWT |
 | `JWT_EXPIRES_IN` | No | `1h` | JWT expiration |
 | `SPRING_SUPPORT_BASE_URL` | No | `http://localhost:8080` | Core backend base URL |
@@ -92,7 +94,7 @@ It handles support authentication, conversation/message state in PostgreSQL, and
 | `ALLOW_INSECURE_SUPPORT_ACCESS` | No | `false` | Dev-only bypass for role/username support authorization |
 | `ALLOW_INSECURE_DB_DEFAULTS` | No | `false` | Dev-only fallback to `postgres/postgres` if DB creds are missing |
 
-\* `DB_USER` and `DB_PASSWORD` are required unless `ALLOW_INSECURE_DB_DEFAULTS=true` in non-production.  
+\* `DB_USER` and `DB_PASSWORD` are required only when `DATABASE_URL` is not provided (unless `ALLOW_INSECURE_DB_DEFAULTS=true` in non-production).  
 \** `INTERNAL_EVENT_KEY` is required unless `ALLOW_INSECURE_INTERNAL_EVENTS=true` in non-production.
 
 ## Setup
@@ -110,6 +112,7 @@ DB_PORT=5432
 DB_NAME=migros_support_db
 DB_USER=postgres
 DB_PASSWORD=change-me
+DB_SSL_REJECT_UNAUTHORIZED=false
 JWT_SECRET=change-me
 JWT_EXPIRES_IN=1h
 SPRING_SUPPORT_BASE_URL=http://localhost:8080
@@ -140,6 +143,43 @@ or
 ```bash
 npm start
 ```
+
+## Docker
+
+Build and run with Docker Compose:
+
+```bash
+docker compose up --build -d
+```
+
+Stop containers:
+
+```bash
+docker compose down
+```
+
+Remove containers:
+
+```bash
+docker compose down
+```
+
+Notes:
+
+- `docker-compose.yml` starts only the `app` service.
+- App port is published as `${PORT:-3000}:3000` (set `PORT` in your shell or `.env` to override host port).
+- Set `DATABASE_URL` to your Supabase connection string (usually includes `sslmode=require`).
+- `DB_USER` and `DB_PASSWORD` are optional if `DATABASE_URL` is set.
+- Default `SPRING_SUPPORT_BASE_URL` in Docker is `http://host.docker.internal:8080` so the container can reach a Spring app running on your host machine.
+- Docker run uses `NODE_OPTIONS=--dns-result-order=ipv4first` to avoid IPv6-first DNS issues in some Docker networks.
+- If TLS fails with `self-signed certificate in certificate chain`, keep `DB_SSL_REJECT_UNAUTHORIZED=false` (or provide trusted CA and set it to `true`).
+
+Troubleshooting:
+
+- If you see `connect ENETUNREACH ...:5432` with an IPv6 address, your Supabase hostname is resolving to IPv6 that Docker cannot route.
+- Use Supabase pooler connection string (host like `*.pooler.supabase.com`) and keep `sslmode=require` in `DATABASE_URL`.
+- Example pooler format (replace placeholders):
+  `postgresql://postgres.<project_ref>:<db_password>@aws-0-<region>.pooler.supabase.com:6543/postgres?sslmode=require`
 
 ## Database notes
 
