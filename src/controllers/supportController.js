@@ -1,6 +1,6 @@
 const { pool } = require('../config/db');
 
-const SPRING_SUPPORT_BASE_URL = process.env.SPRING_SUPPORT_BASE_URL || 'http://localhost:8080';
+const SPRING_SUPPORT_BASE_URL = process.env.SPRING_SUPPORT_BASE_URL;
 const SPRING_SUPPORT_INTERNAL_KEY = process.env.SPRING_SUPPORT_INTERNAL_KEY || '';
 const DEFAULT_SPRING_REQUEST_TIMEOUT_MS = 5000;
 const DEFAULT_STATUS_CONCURRENCY = 10;
