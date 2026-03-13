@@ -72,13 +72,28 @@ It handles support authentication, conversation/message state in PostgreSQL, and
 | `DB_HOST` | No | `localhost` | PostgreSQL host |
 | `DB_PORT` | No | `5432` | PostgreSQL port |
 | `DB_NAME` | No | `migros_support_db` | PostgreSQL database name |
-| `DB_USER` | No | `postgres` | PostgreSQL user |
-| `DB_PASSWORD` | No | `postgres` | PostgreSQL password |
+| `DB_USER` | Yes* | - | PostgreSQL user |
+| `DB_PASSWORD` | Yes* | - | PostgreSQL password |
 | `JWT_SECRET` | Yes | - | Secret for signing/verifying JWT |
 | `JWT_EXPIRES_IN` | No | `1h` | JWT expiration |
 | `SPRING_SUPPORT_BASE_URL` | No | `http://localhost:8080` | Core backend base URL |
 | `SPRING_SUPPORT_INTERNAL_KEY` | No | empty | Sent as `x-internal-key` to Spring |
-| `INTERNAL_EVENT_KEY` | No | empty | Required `x-internal-key` for `/internal/events/*` |
+| `INTERNAL_EVENT_KEY` | Yes** | - | Required `x-internal-key` for `/internal/events/*` |
+| `SUPPORT_ALLOWED_ROLES` | No | `support_agent,support_admin,admin` | Allowed JWT `role` values for `/support/*` and `/users/*` |
+| `SUPPORT_ALLOWED_USERNAMES` | No | empty | Comma-separated username allowlist for `/support/*` and `/users/*` |
+| `LOGIN_RATE_LIMIT_WINDOW_MS` | No | `900000` | Login rate limit window duration |
+| `LOGIN_RATE_LIMIT_LOCKOUT_MS` | No | `900000` | Login lockout duration after threshold |
+| `LOGIN_RATE_LIMIT_MAX_PER_IP` | No | `100` | Max failed login attempts per IP per window |
+| `LOGIN_RATE_LIMIT_MAX_PER_USERNAME_IP` | No | `10` | Max failed login attempts per username+IP per window |
+| `SPRING_REQUEST_TIMEOUT_MS` | No | `5000` | Timeout for internal Spring HTTP requests |
+| `SUPPORT_STATUS_CONCURRENCY` | No | `10` | Max concurrent upstream requests in conversation status fan-out |
+| `JSON_BODY_LIMIT` | No | `100kb` | Maximum JSON request body size |
+| `ALLOW_INSECURE_INTERNAL_EVENTS` | No | `false` | Dev-only bypass for missing `INTERNAL_EVENT_KEY` |
+| `ALLOW_INSECURE_SUPPORT_ACCESS` | No | `false` | Dev-only bypass for role/username support authorization |
+| `ALLOW_INSECURE_DB_DEFAULTS` | No | `false` | Dev-only fallback to `postgres/postgres` if DB creds are missing |
+
+\* `DB_USER` and `DB_PASSWORD` are required unless `ALLOW_INSECURE_DB_DEFAULTS=true` in non-production.  
+\** `INTERNAL_EVENT_KEY` is required unless `ALLOW_INSECURE_INTERNAL_EVENTS=true` in non-production.
 
 ## Setup
 
@@ -94,12 +109,24 @@ DB_HOST=localhost
 DB_PORT=5432
 DB_NAME=migros_support_db
 DB_USER=postgres
-DB_PASSWORD=postgres
+DB_PASSWORD=change-me
 JWT_SECRET=change-me
 JWT_EXPIRES_IN=1h
 SPRING_SUPPORT_BASE_URL=http://localhost:8080
 SPRING_SUPPORT_INTERNAL_KEY=
-INTERNAL_EVENT_KEY=
+INTERNAL_EVENT_KEY=change-me
+SUPPORT_ALLOWED_ROLES=support_agent,support_admin,admin
+SUPPORT_ALLOWED_USERNAMES=
+LOGIN_RATE_LIMIT_WINDOW_MS=900000
+LOGIN_RATE_LIMIT_LOCKOUT_MS=900000
+LOGIN_RATE_LIMIT_MAX_PER_IP=100
+LOGIN_RATE_LIMIT_MAX_PER_USERNAME_IP=10
+SPRING_REQUEST_TIMEOUT_MS=5000
+SUPPORT_STATUS_CONCURRENCY=10
+JSON_BODY_LIMIT=100kb
+ALLOW_INSECURE_INTERNAL_EVENTS=false
+ALLOW_INSECURE_SUPPORT_ACCESS=false
+ALLOW_INSECURE_DB_DEFAULTS=false
 ```
 
 Start:
@@ -131,11 +158,18 @@ You need a compatible `users` table with at least:
 - `password_hash` (bcrypt hash)
 - `created_at`
 
+Optional but recommended for role-based authorization:
+
+- `role` (e.g. `support_agent`, `support_admin`, `admin`)
+
 ## Authentication
 
 - `POST /auth/login` returns `accessToken` (Bearer JWT).
 - Pass token in `Authorization: Bearer <token>`.
-- `/support/*` and `/auth/me` require authentication.
+- `/support/*` and `/users/*` require authentication plus support authorization.
+- Support authorization is granted by either:
+  - JWT `role` claim matching `SUPPORT_ALLOWED_ROLES`, or
+  - username listed in `SUPPORT_ALLOWED_USERNAMES`.
 
 ## API endpoints
 
@@ -152,10 +186,10 @@ You need a compatible `users` table with at least:
 
 ### Users
 
-- `GET /users`
-- `GET /users/:id`
+- `GET /users` (Bearer token + support access required)
+- `GET /users/:id` (Bearer token + support access required)
 
-### Support (Bearer token required)
+### Support (Bearer token + support access required)
 
 - `GET /support/customers?query=<text>&limit=<1-100>`
 - `GET /support/conversations?limit=<1-200>`
@@ -173,7 +207,7 @@ You need a compatible `users` table with at least:
 ### Internal event ingestion
 
 Base path: `/internal/events`  
-If `INTERNAL_EVENT_KEY` is set, requests must include header:
+Requests must include header:
 
 ```http
 x-internal-key: <INTERNAL_EVENT_KEY>

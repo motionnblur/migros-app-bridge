@@ -10,13 +10,20 @@ function getJwtSecret() {
 }
 
 function createAccessToken(user) {
+    const normalizedRole =
+        typeof user?.role === 'string' && user.role.trim()
+            ? user.role.trim().toLowerCase()
+            : null;
+
     return jwt.sign(
         {
             sub: user.id,
-            username: user.username
+            username: user.username,
+            ...(normalizedRole ? { role: normalizedRole } : {})
         },
         getJwtSecret(),
         {
+            algorithm: 'HS256',
             expiresIn: jwtExpiresIn
         }
     );

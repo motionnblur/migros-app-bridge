@@ -1,11 +1,28 @@
+require('./env');
+
 const { Pool } = require('pg');
+
+function isEnabled(value) {
+    return String(value || '').trim().toLowerCase() === 'true';
+}
+
+const allowInsecureDbDefaults =
+    process.env.NODE_ENV !== 'production' &&
+    isEnabled(process.env.ALLOW_INSECURE_DB_DEFAULTS);
+
+const dbUser = process.env.DB_USER || (allowInsecureDbDefaults ? 'postgres' : '');
+const dbPassword = process.env.DB_PASSWORD || (allowInsecureDbDefaults ? 'postgres' : '');
+
+if (!dbUser || !dbPassword) {
+    throw new Error('DB_USER and DB_PASSWORD must be configured');
+}
 
 const pool = new Pool({
     host: process.env.DB_HOST || 'localhost',
     port: Number(process.env.DB_PORT) || 5432,
     database: process.env.DB_NAME || 'migros_support_db',
-    user: process.env.DB_USER || 'postgres',
-    password: process.env.DB_PASSWORD || 'postgres'
+    user: dbUser,
+    password: dbPassword
 });
 
 async function checkDbConnection() {

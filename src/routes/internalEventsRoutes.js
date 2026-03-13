@@ -3,12 +3,22 @@ const { pool } = require('../config/db');
 
 const router = express.Router();
 
+function isEnabled(value) {
+  return String(value || '').trim().toLowerCase() === 'true';
+}
+
 function authenticateInternalEvent(req, res, next) {
   const expectedKey = process.env.INTERNAL_EVENT_KEY;
+  const allowInsecureInternalEvents =
+    process.env.NODE_ENV !== 'production' &&
+    isEnabled(process.env.ALLOW_INSECURE_INTERNAL_EVENTS);
 
-  // If no key configured, allow local development without blocking.
-  if (!expectedKey) {
+  if (!expectedKey && allowInsecureInternalEvents) {
     return next();
+  }
+
+  if (!expectedKey) {
+    return res.status(503).json({ message: 'Internal event ingestion is disabled' });
   }
 
   const incomingKey = req.headers['x-internal-key'];
@@ -198,7 +208,10 @@ router.post('/customer-message-created', async (req, res) => {
     });
   } catch (error) {
     await client.query('ROLLBACK');
-    return res.status(500).json({ message: error.message || 'Internal server error' });
+    console.error('[internal-events.customer-message-created] Failed to process event', {
+      message: error?.message
+    });
+    return res.status(500).json({ message: 'Internal server error' });
   } finally {
     client.release();
   }
@@ -251,7 +264,10 @@ router.post('/support-message-edited', async (req, res) => {
     });
   } catch (error) {
     await client.query('ROLLBACK');
-    return res.status(500).json({ message: error.message || 'Internal server error' });
+    console.error('[internal-events.support-message-edited] Failed to process event', {
+      message: error?.message
+    });
+    return res.status(500).json({ message: 'Internal server error' });
   } finally {
     client.release();
   }
@@ -302,7 +318,10 @@ router.post('/support-message-deleted', async (req, res) => {
     });
   } catch (error) {
     await client.query('ROLLBACK');
-    return res.status(500).json({ message: error.message || 'Internal server error' });
+    console.error('[internal-events.support-message-deleted] Failed to process event', {
+      message: error?.message
+    });
+    return res.status(500).json({ message: 'Internal server error' });
   } finally {
     client.release();
   }

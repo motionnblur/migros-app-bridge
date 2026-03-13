@@ -7,8 +7,11 @@ async function listUsers(req, res) {
         );
         return res.status(200).json(result.rows);
     } catch (error) {
+        console.error('[users.listUsers] Failed to list users', {
+            message: error?.message
+        });
         return res.status(500).json({
-            message: error.message
+            message: 'Internal server error'
         });
     }
 }
@@ -28,8 +31,12 @@ async function getUserById(req, res) {
 
         return res.status(200).json(result.rows[0]);
     } catch (error) {
+        console.error('[users.getUserById] Failed to load user', {
+            message: error?.message,
+            userId: req.params?.id
+        });
         return res.status(500).json({
-            message: error.message
+            message: 'Internal server error'
         });
     }
 }

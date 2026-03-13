@@ -1,5 +1,6 @@
 const express = require('express');
 const { authenticateToken } = require('../middlewares/authMiddleware');
+const { requireSupportAccess } = require('../middlewares/authorizationMiddleware');
 const {
   listCustomers,
   listConversations,
@@ -16,6 +17,7 @@ const {
 const router = express.Router();
 
 router.use(authenticateToken);
+router.use(requireSupportAccess);
 
 router.get('/customers', listCustomers);
 router.get('/conversations', listConversations);

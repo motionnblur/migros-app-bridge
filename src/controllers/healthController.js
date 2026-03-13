@@ -15,10 +15,13 @@ async function getDbHealth(req, res) {
             database: 'connected'
         });
     } catch (error) {
+        console.error('[health.db] Database health check failed', {
+            message: error?.message
+        });
         return res.status(500).json({
             status: 'error',
             database: 'disconnected',
-            message: error.message
+            message: 'Database health check failed'
         });
     }
 }

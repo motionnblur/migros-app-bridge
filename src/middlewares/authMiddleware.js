@@ -13,7 +13,9 @@ function authenticateToken(req, res, next) {
     const token = authHeader.slice(7);
 
     try {
-        const decoded = jwt.verify(token, getJwtSecret());
+        const decoded = jwt.verify(token, getJwtSecret(), {
+            algorithms: ['HS256']
+        });
         req.auth = decoded;
         return next();
     } catch (error) {
