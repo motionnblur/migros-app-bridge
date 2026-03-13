@@ -18,11 +18,7 @@ if (!dbUser || !dbPassword) {
 }
 
 const pool = new Pool({
-    host: process.env.DB_HOST || 'localhost',
-    port: Number(process.env.DB_PORT) || 5432,
-    database: process.env.DB_NAME || 'migros_support_db',
-    user: dbUser,
-    password: dbPassword
+    connectionString: process.env.DATABASE_URL
 });
 
 async function checkDbConnection() {
