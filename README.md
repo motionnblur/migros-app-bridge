@@ -78,7 +78,7 @@ It handles support authentication, conversation/message state in PostgreSQL, and
 | `DB_SSL_REJECT_UNAUTHORIZED` | No | `false` for Supabase hosts, otherwise `true` | TLS cert chain validation behavior |
 | `JWT_SECRET` | Yes | - | Secret for signing/verifying JWT |
 | `JWT_EXPIRES_IN` | No | `1h` | JWT expiration |
-| `SPRING_SUPPORT_BASE_URL` | No | `http://localhost:8080` | Core backend base URL |
+| `SPRING_SUPPORT_BASE_URL` | No | `https://migros-app.onrender.com` | Core backend base URL |
 | `SPRING_SUPPORT_INTERNAL_KEY` | No | empty | Sent as `x-internal-key` to Spring |
 | `INTERNAL_EVENT_KEY` | Yes** | - | Required `x-internal-key` for `/internal/events/*` |
 | `SUPPORT_ALLOWED_ROLES` | No | `support_agent,support_admin,admin` | Allowed JWT `role` values for `/support/*` and `/users/*` |
@@ -115,7 +115,7 @@ DB_PASSWORD=change-me
 DB_SSL_REJECT_UNAUTHORIZED=false
 JWT_SECRET=change-me
 JWT_EXPIRES_IN=1h
-SPRING_SUPPORT_BASE_URL=http://localhost:8080
+SPRING_SUPPORT_BASE_URL=https://migros-app.onrender.com
 SPRING_SUPPORT_INTERNAL_KEY=
 INTERNAL_EVENT_KEY=change-me
 SUPPORT_ALLOWED_ROLES=support_agent,support_admin,admin
@@ -170,7 +170,8 @@ Notes:
 - App port is published as `${PORT:-3000}:3000` (set `PORT` in your shell or `.env` to override host port).
 - Set `DATABASE_URL` to your Supabase connection string (usually includes `sslmode=require`).
 - `DB_USER` and `DB_PASSWORD` are optional if `DATABASE_URL` is set.
-- Default `SPRING_SUPPORT_BASE_URL` in Docker is `http://host.docker.internal:8080` so the container can reach a Spring app running on your host machine.
+- Default `SPRING_SUPPORT_BASE_URL` in Docker is `https://migros-app.onrender.com`.
+- If you want to run Spring locally, override `SPRING_SUPPORT_BASE_URL` with `http://host.docker.internal:8080`.
 - Docker run uses `NODE_OPTIONS=--dns-result-order=ipv4first` to avoid IPv6-first DNS issues in some Docker networks.
 - If TLS fails with `self-signed certificate in certificate chain`, keep `DB_SSL_REJECT_UNAUTHORIZED=false` (or provide trusted CA and set it to `true`).
 

@@ -1,6 +1,11 @@
 const { pool } = require('../config/db');
 
-const SPRING_SUPPORT_BASE_URL = process.env.SPRING_SUPPORT_BASE_URL;
+const DEFAULT_SPRING_SUPPORT_BASE_URL = 'https://migros-app.onrender.com';
+const SPRING_SUPPORT_BASE_URL = String(
+    process.env.SPRING_SUPPORT_BASE_URL || DEFAULT_SPRING_SUPPORT_BASE_URL
+)
+    .trim()
+    .replace(/\/+$/, '');
 const SPRING_SUPPORT_INTERNAL_KEY = process.env.SPRING_SUPPORT_INTERNAL_KEY || '';
 const DEFAULT_SPRING_REQUEST_TIMEOUT_MS = 5000;
 const DEFAULT_STATUS_CONCURRENCY = 10;
